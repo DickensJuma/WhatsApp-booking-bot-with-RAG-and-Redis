@@ -87,7 +87,29 @@ async function processIncomingMessage({
       throw new Error("Business configuration not found");
     }
 
-    // Generate AI response
+    // Before intent analysis, check if awaiting a simple confirmation (yes/no) for cancellation
+    const preConfirm = await handleConfirmationResponse(
+      messageText,
+      context,
+      customer
+    );
+    if (preConfirm) {
+      // Add AI response to context
+      context.lastMessages.push({
+        role: "assistant",
+        content: preConfirm,
+        timestamp: new Date(),
+      });
+      conversationMemory.set(customerPhone, context);
+      try {
+        await redisSetJSON(memKey(customerPhone), context, MEM_TTL_SECONDS);
+      } catch (_) {}
+      customer.last_interaction = new Date();
+      await customer.save();
+      return preConfirm;
+    }
+
+    // Generate AI response (full intent flow)
     const response = await generateAIResponse(
       messageText,
       context,
@@ -325,6 +347,26 @@ Respond in JSON format:
       analysis.extracted_info.date = moment().format("YYYY-MM-DD");
     }
 
+    // Fallback lightweight local parsing if model missed simple relative date
+    if (!analysis.extracted_info.date) {
+      const lower = messageText.toLowerCase().trim();
+      if (lower === "tomorrow") {
+        analysis.extracted_info.date = moment()
+          .add(1, "day")
+          .format("YYYY-MM-DD");
+      } else if (lower === "today") {
+        analysis.extracted_info.date = moment().format("YYYY-MM-DD");
+      } else {
+        // Direct ISO date pattern
+        if (
+          /^\d{4}-\d{2}-\d{2}$/.test(lower) &&
+          moment(lower, "YYYY-MM-DD", true).isValid()
+        ) {
+          analysis.extracted_info.date = lower;
+        }
+      }
+    }
+
     return analysis;
   } catch (error) {
     console.error("❌ Error analyzing intent:", error);
@@ -375,7 +417,7 @@ async function handleBookingFlow(intentAnalysis, context, business, customer) {
       return `I didn't understand that date. Could you please specify a date like "tomorrow", "Monday", or "December 15th"?`;
     }
 
-    if (date.isBefore(today, "day")) {
+    if (date.startOf("day").isBefore(today.startOf("day"))) {
       return `I can't book appointments in the past. Could you choose today or a future date?`;
     }
 

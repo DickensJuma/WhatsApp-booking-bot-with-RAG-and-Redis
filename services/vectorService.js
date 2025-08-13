@@ -12,6 +12,8 @@ try {
   // optional
 }
 const FAQChunk = require("../model/FAQChunk");
+// Messaging provider (meta|twilio|infobip|mock) used to optionally disable heavy services in mock mode
+const MSG_PROVIDER = (process.env.WHATSAPP_PROVIDER || "").toLowerCase();
 
 // Simple in-memory vector index as fallback (per business)
 // For production, replace with Pinecone or pgvector.
@@ -202,6 +204,8 @@ function projectVector(vec, targetDim) {
 }
 
 function pineconeEnabled() {
+  // In mock messaging mode, skip Pinecone entirely to avoid noisy warnings and external calls
+  if (MSG_PROVIDER === "mock") return false;
   const enabled =
     !!PineconeLib &&
     !!process.env.PINECONE_API_KEY &&

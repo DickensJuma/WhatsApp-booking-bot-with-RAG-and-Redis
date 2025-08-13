@@ -12,6 +12,10 @@ mongoose
   .then(async () => {
     console.log("✅ Connected to MongoDB");
     try {
+      // In tests, skip seeding to keep fixtures deterministic
+      if (process.env.NODE_ENV === 'test') {
+        return;
+      }
       // Ensure a default business exists
       const Business = require("../model/Business");
       const count = await Business.countDocuments({});

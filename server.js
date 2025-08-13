@@ -12,6 +12,19 @@ dotenv.config();
 const webhookRoutes = require("./routes/webhook");
 const adminRoutes = require("./routes/admin");
 const businessRoutes = require("./routes/business");
+const { processIncomingMessage } = require("./services/aiService");
+const { sendWhatsAppMessage } = require("./services/whatsappService");
+const { addOutbound, getOutbound, clearOutbound } = (() => {
+  try {
+    return require("./services/mockMessageStore");
+  } catch (_) {
+    return {
+      addOutbound: () => {},
+      getOutbound: () => [],
+      clearOutbound: () => {},
+    };
+  }
+})();
 
 // Import database (Mongoose connection is handled in config/database.js)
 require("./config/database");
@@ -33,6 +46,40 @@ app.use("/webhook", webhookRoutes);
 app.use("/admin", adminRoutes);
 app.use("/business", businessRoutes);
 
+// Twilio WhatsApp webhook (if provider=twilio)
+app.post(
+  "/webhook/twilio",
+  express.urlencoded({ extended: false }),
+  async (req, res) => {
+    try {
+      if ((process.env.WHATSAPP_PROVIDER || "").toLowerCase() !== "twilio") {
+        return res.status(400).send("Twilio provider not active");
+      }
+      const from = req.body.From || "";
+      const body = req.body.Body || "";
+      if (!from || !body) {
+        return res.status(200).send("IGNORED");
+      }
+      const cleanFrom = from.replace(/^whatsapp:/, "");
+      const response = await processIncomingMessage({
+        messageText: body,
+        customerPhone: cleanFrom,
+        customerName: null,
+        messageId: req.body.MessageSid || `tw_${Date.now()}`,
+      });
+      if (response) {
+        try {
+          await sendWhatsAppMessage(cleanFrom, response);
+        } catch (_) {}
+      }
+      res.status(200).send("OK");
+    } catch (e) {
+      console.error("Twilio webhook error", e.message);
+      res.status(500).send("ERROR");
+    }
+  }
+);
+
 // Health check endpoint
 app.get("/health", (req, res) => {
   res.json({
@@ -40,6 +87,81 @@ app.get("/health", (req, res) => {
     timestamp: new Date().toISOString(),
     service: "Spark WhatsApp AI",
   });
+});
+
+// Mock / debug routes (only when provider=mock) - protected by ADMIN_TOKEN
+app.post("/debug/inject", async (req, res) => {
+  try {
+    if ((process.env.WHATSAPP_PROVIDER || "").toLowerCase() !== "mock") {
+      return res.status(400).json({ error: "Mock provider not active" });
+    }
+    console.log("Debug inject request:", req.body, process.env.ADMIN_TOKEN);
+    console.log("req.headers['x-admin-token']", req.headers["x-admin-token"]);
+    if (
+      !process.env.ADMIN_TOKEN ||
+      req.headers["x-admin-token"] !== process.env.ADMIN_TOKEN
+    ) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const { from, message, name } = req.body || {};
+    if (!from || !message)
+      return res.status(400).json({ error: "from and message required" });
+    const aiReply = await processIncomingMessage({
+      messageText: message,
+      customerPhone: from,
+      customerName: name || null,
+      messageId: `mock_${Date.now()}`,
+    });
+    if (aiReply) {
+      // Instead of sending externally, record as outbound mock message
+      addOutbound({
+        provider: "mock",
+        to: from,
+        body: aiReply,
+        type: "ai-reply",
+      });
+    }
+    res.json({ injected: true, aiReply });
+  } catch (e) {
+    console.error("debug/inject error", e);
+    res.status(500).json({ error: "internal error" });
+  }
+});
+
+app.get("/debug/messages", (req, res) => {
+  try {
+    if ((process.env.WHATSAPP_PROVIDER || "").toLowerCase() !== "mock") {
+      return res.status(400).json({ error: "Mock provider not active" });
+    }
+    if (
+      !process.env.ADMIN_TOKEN ||
+      req.headers["x-admin-token"] !== process.env.ADMIN_TOKEN
+    ) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    const limit = parseInt(req.query.limit || "100", 10);
+    res.json({ messages: getOutbound(limit) });
+  } catch (e) {
+    res.status(500).json({ error: "internal error" });
+  }
+});
+
+app.post("/debug/messages/clear", (req, res) => {
+  try {
+    if ((process.env.WHATSAPP_PROVIDER || "").toLowerCase() !== "mock") {
+      return res.status(400).json({ error: "Mock provider not active" });
+    }
+    if (
+      !process.env.ADMIN_TOKEN ||
+      req.headers["x-admin-token"] !== process.env.ADMIN_TOKEN
+    ) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    clearOutbound();
+    res.json({ cleared: true });
+  } catch (e) {
+    res.status(500).json({ error: "internal error" });
+  }
 });
 
 // Root endpoint
@@ -52,6 +174,22 @@ app.get("/", (req, res) => {
       admin: "/admin",
       business: "/business",
       health: "/health",
+    },
+  });
+});
+
+// Provide same info for POST / to avoid 404 when accidentally POSTing root
+app.post("/", (req, res) => {
+  res.json({
+    message: "Spark WhatsApp AI - Appointment Scheduling Agent",
+    version: "1.0.0",
+    note: "This endpoint is read-only; POST body ignored.",
+    endpoints: {
+      webhook: "/webhook",
+      admin: "/admin",
+      business: "/business",
+      health: "/health",
+      debugInject: "/debug/inject (POST, mock mode)",
     },
   });
 });

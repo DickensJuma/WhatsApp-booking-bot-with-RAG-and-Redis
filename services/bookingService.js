@@ -290,10 +290,11 @@ async function cancelAppointment(appointmentId, reason = null) {
     }
 
     // Check if appointment can be cancelled (within cancellation policy)
-    const business = appointment.business;
-    if (!appointment.canBeCancelled(business.cancellation_hours)) {
+    const business = appointment.business_id || appointment.business || null;
+    const cancellationHours = business?.cancellation_hours || 24;
+    if (!appointment.canBeCancelled(cancellationHours)) {
       throw new Error(
-        `Appointments must be cancelled at least ${business.cancellation_hours} hours in advance`
+        `Appointments must be cancelled at least ${cancellationHours} hours in advance`
       );
     }
 
