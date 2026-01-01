@@ -8,6 +8,15 @@ const path = require("path");
 // Load environment variables
 dotenv.config();
 
+// Validate environment variables (throws error if invalid)
+const { validateEnvironment } = require("./config/validateEnv");
+try {
+  validateEnvironment();
+} catch (error) {
+  console.error("❌ Failed to start server:", error.message);
+  process.exit(1);
+}
+
 // Import routes
 const webhookRoutes = require("./routes/webhook");
 const adminRoutes = require("./routes/admin");
@@ -34,8 +43,18 @@ const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(helmet());
-app.use(cors());
-app.use(morgan("combined"));
+
+// CORS configuration - restrict to trusted origins in production
+const corsOptions = {
+  origin: process.env.NODE_ENV === 'production' 
+    ? (process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : [])
+    : true, // Allow all in development
+  credentials: true,
+  optionsSuccessStatus: 200,
+};
+app.use(cors(corsOptions));
+
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 // Parse JSON bodies (WhatsApp sends JSON)
 app.use(express.json());
@@ -80,13 +99,57 @@ app.post(
   }
 );
 
-// Health check endpoint
-app.get("/health", (req, res) => {
-  res.json({
+// Health check endpoint with dependency validation
+app.get("/health", async (req, res) => {
+  const health = {
     status: "OK",
     timestamp: new Date().toISOString(),
     service: "Spark WhatsApp AI",
-  });
+    checks: {
+      database: "unknown",
+      redis: "unknown",
+    },
+  };
+
+  try {
+    // Check MongoDB connection
+    const mongoose = require("mongoose");
+    if (mongoose.connection.readyState === 1) {
+      health.checks.database = "connected";
+      // Quick query test
+      try {
+        await mongoose.connection.db.admin().ping();
+        health.checks.database = "healthy";
+      } catch (err) {
+        health.checks.database = "disconnected";
+        health.status = "degraded";
+      }
+    } else {
+      health.checks.database = "disconnected";
+      health.status = "unhealthy";
+    }
+  } catch (err) {
+    health.checks.database = "error";
+    health.status = "unhealthy";
+  }
+
+  // Check Redis connection (optional)
+  try {
+    const { getRedis } = require("./services/redisClient");
+    const redis = await getRedis();
+    if (redis && redis.isOpen) {
+      await redis.ping();
+      health.checks.redis = "healthy";
+    } else {
+      health.checks.redis = "disabled";
+    }
+  } catch (err) {
+    health.checks.redis = "error";
+    // Redis is optional, so don't fail health check
+  }
+
+  const statusCode = health.status === "OK" ? 200 : health.status === "degraded" ? 200 : 503;
+  res.status(statusCode).json(health);
 });
 
 // Mock / debug routes (only when provider=mock) - protected by ADMIN_TOKEN
@@ -196,13 +259,26 @@ app.post("/", (req, res) => {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error("Error:", err);
-  res.status(500).json({
+  // Log error with context (but sanitize sensitive data in production)
+  const errorDetails = process.env.NODE_ENV === "development" 
+    ? { message: err.message, stack: err.stack }
+    : { message: err.message };
+  
+  console.error("Error:", {
+    message: err.message,
+    path: req.path,
+    method: req.method,
+    ...(process.env.NODE_ENV === "development" && { stack: err.stack }),
+  });
+
+  // Don't expose stack traces or sensitive information in production
+  res.status(err.status || 500).json({
     error: "Internal Server Error",
     message:
       process.env.NODE_ENV === "development"
         ? err.message
-        : "Something went wrong",
+        : "An error occurred processing your request",
+    ...(process.env.NODE_ENV === "development" && { details: errorDetails }),
   });
 });
 

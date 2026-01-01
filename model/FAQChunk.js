@@ -18,7 +18,8 @@ const FAQChunkSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Create a compound index for business and text search
-FAQChunkSchema.index({ business_id: 1, text: "text" });
+// Create indexes for performance
+FAQChunkSchema.index({ business_id: 1, is_active: 1 }); // Most common query pattern
+FAQChunkSchema.index({ business_id: 1, text: "text" }); // Text search index
 
 module.exports = mongoose.model("FAQChunk", FAQChunkSchema);

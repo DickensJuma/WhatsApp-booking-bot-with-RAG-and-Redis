@@ -8,7 +8,13 @@ const MONGODB_URI =
   process.env.MONGODB_URI || "mongodb://localhost:27017/spark_whatsapp_ai";
 
 mongoose
-  .connect(MONGODB_URI)
+  .connect(MONGODB_URI, {
+    // Connection pool settings for production
+    maxPoolSize: 10, // Maintain up to 10 socket connections
+    serverSelectionTimeoutMS: 5000, // Keep trying to send operations for 5 seconds
+    socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
+    family: 4, // Use IPv4, skip trying IPv6
+  })
   .then(async () => {
     console.log("✅ Connected to MongoDB");
     try {

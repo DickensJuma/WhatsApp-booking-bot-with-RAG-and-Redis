@@ -61,6 +61,13 @@ const AppointmentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Database indexes for performance
+AppointmentSchema.index({ business_id: 1, appointment_date: 1, status: 1 });
+AppointmentSchema.index({ customer_id: 1, appointment_date: -1 });
+AppointmentSchema.index({ appointment_date: 1, appointment_time: 1 });
+AppointmentSchema.index({ status: 1, appointment_date: 1 });
+// confirmation_code already has index: true in schema
+
 const moment = require("moment");
 
 // Instance methods

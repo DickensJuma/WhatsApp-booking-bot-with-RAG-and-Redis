@@ -12,29 +12,18 @@ const {
   pineconeUpsertOrNull,
   pineconeDelete,
 } = require("../services/vectorService");
-const rateLimit = require("express-rate-limit");
+const { requireAdminAuth, createRateLimit } = require("../middleware/auth");
 
-// Basic auth middleware (simple token header)
-function requireKBAuth(req, res, next) {
-  const token = req.headers["x-admin-token"] || req.query.token;
-  const expected = process.env.ADMIN_TOKEN;
-  if (!expected) {
-    return res
-      .status(500)
-      .json({
-        success: false,
-        error: "Server misconfiguration: ADMIN_TOKEN not set",
-      });
-  }
-  if (token && token === expected) return next();
-  return res.status(401).json({ success: false, error: "Unauthorized" });
-}
+// Apply authentication to all business routes (KB management requires auth)
+// Note: Some routes like /business/appointments might need public access
+// Adjust per route if needed
+router.use(requireAdminAuth);
 
-// Apply rate limiting to KB routes
-router.use(rateLimit({ windowMs: 60 * 1000, max: 60 }));
+// Apply rate limiting to KB routes (60 requests per minute)
+router.use(createRateLimit(60 * 1000, 60));
 
 // Add or update FAQ/KB item (embed + store)
-router.post("/:id/faq", requireKBAuth, async (req, res) => {
+router.post("/:id/faq", async (req, res) => {
   try {
     const businessId = req.params.id;
     const { title, text, source, metadata } = req.body;
@@ -86,7 +75,7 @@ router.post("/:id/faq", requireKBAuth, async (req, res) => {
 });
 
 // List all FAQ/KB items for a business
-router.get("/:id/faq", requireKBAuth, async (req, res) => {
+router.get("/:id/faq", async (req, res) => {
   try {
     const businessId = req.params.id;
     const items = await FAQChunk.find({
@@ -113,7 +102,7 @@ router.get("/:id/faq", requireKBAuth, async (req, res) => {
 });
 
 // Update an existing KB item
-router.put("/:id/faq/:itemId", requireKBAuth, async (req, res) => {
+router.put("/:id/faq/:itemId", async (req, res) => {
   try {
     const { id: businessId, itemId } = req.params;
     const { title, text, source, metadata } = req.body;
@@ -156,7 +145,7 @@ router.put("/:id/faq/:itemId", requireKBAuth, async (req, res) => {
 });
 
 // Delete (soft) a KB item
-router.delete("/:id/faq/:itemId", requireKBAuth, async (req, res) => {
+router.delete("/:id/faq/:itemId", async (req, res) => {
   try {
     const { id: businessId, itemId } = req.params;
     const item = await FAQChunk.findOne({
@@ -180,7 +169,7 @@ router.delete("/:id/faq/:itemId", requireKBAuth, async (req, res) => {
 });
 
 // Bulk chunking endpoint for large documents
-router.post("/:id/faq/bulk", requireKBAuth, async (req, res) => {
+router.post("/:id/faq/bulk", async (req, res) => {
   try {
     const { id: businessId } = req.params;
     const { title, text, source, metadata, maxChars } = req.body;

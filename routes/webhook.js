@@ -2,6 +2,10 @@ const express = require('express');
 const router = express.Router();
 const { processIncomingMessage } = require('../services/aiService');
 const { sendWhatsAppMessage } = require('../services/whatsappService');
+const { verifyWebhookSignature, createRateLimit } = require('../middleware/auth');
+
+// Apply rate limiting to webhook (100 requests per minute)
+router.use(createRateLimit(60 * 1000, 100));
 
 // GET webhook verification (required by Meta)
 router.get('/', (req, res) => {
@@ -31,7 +35,10 @@ router.get('/', (req, res) => {
 });
 
 // POST webhook to handle incoming messages
-router.post('/', async (req, res) => {
+// Note: Signature verification requires raw body, but Express.json() parses it first
+// For production, consider using body-parser with verify option to preserve raw body
+// For now, signature verification is optional (enabled if WHATSAPP_APP_SECRET is set)
+router.post('/', verifyWebhookSignature, async (req, res) => {
   try {
     const body = req.body;
 

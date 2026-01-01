@@ -41,6 +41,10 @@ const CustomerSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Database indexes for performance
+CustomerSchema.index({ whatsapp_number: 1 }); // unique index already exists, this is for explicit query optimization
+CustomerSchema.index({ is_active: 1, last_interaction: -1 });
+
 const Customer = mongoose.model("Customer", CustomerSchema);
 
 module.exports = Customer;

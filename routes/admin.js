@@ -9,6 +9,13 @@ const {
   sendTomorrowReminders,
   updateAppointmentStatuses,
 } = require("../services/bookingService");
+const { requireAdminAuth, createRateLimit } = require("../middleware/auth");
+
+// Apply authentication to all admin routes
+router.use(requireAdminAuth);
+
+// Apply rate limiting to admin routes (60 requests per minute)
+router.use(createRateLimit(60 * 1000, 60));
 
 // Get dashboard overview
 router.get("/dashboard", async (req, res) => {
